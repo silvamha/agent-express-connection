@@ -1,0 +1,17 @@
+{
+  "name": "agent-express-connection",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Ed Silva",
+  "license": "ISC",
+  "devDependencies": {
+    "@mistralai/mistralai": "^1.3.1",
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "vite": "^5.4.11"
+  }
+}
