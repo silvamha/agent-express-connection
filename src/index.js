@@ -13,7 +13,35 @@ const MAX_MESSAGES = 100; // Maximum number of messages to store
 class MessageManager {
     constructor(storageKey) {
         this.storageKey = storageKey;
+        this.systemMessageKey = `${storageKey}_system`;
         this.messages = this.loadMessages();
+        this.systemMessage = this.loadSystemMessage();
+    }
+
+    loadSystemMessage() {
+        try {
+            const stored = localStorage.getItem(this.systemMessageKey);
+            return stored ? JSON.parse(stored) : null;
+        } catch (error) {
+            console.error('Error loading system message:', error);
+            return null;
+        }
+    }
+
+    setSystemMessage(content) {
+        try {
+            const systemMessage = {
+                role: 'system',
+                content,
+                timestamp: Date.now()
+            };
+            localStorage.setItem(this.systemMessageKey, JSON.stringify(systemMessage));
+            this.systemMessage = systemMessage;
+            return true;
+        } catch (error) {
+            console.error('Error saving system message:', error);
+            return false;
+        }
     }
 
     loadMessages() {
@@ -38,25 +66,25 @@ class MessageManager {
         }
     }
 
-    isValidMessage(msg) {
-        return msg 
-            && typeof msg === 'object'
-            && ['user', 'agent', 'system'].includes(msg.role)
-            && typeof msg.content === 'string'
-            && typeof msg.timestamp === 'number';
+    getConversationHistory() {
+        // Combine system message with conversation history
+        const history = [...this.messages];
+        if (this.systemMessage) {
+            history.unshift(this.systemMessage);
+        }
+        return history;
     }
 
     addMessage(role, content) {
         const message = {
             role,
             content,
-            timestamp: Date.now(),
-            id: crypto.randomUUID() // Unique ID for each message
+            timestamp: Date.now()
         };
 
         this.messages.unshift(message);
         
-        // Trim old messages if exceeding maximum
+        // Trim messages but preserve system message
         if (this.messages.length > MAX_MESSAGES) {
             this.messages = this.messages.slice(0, MAX_MESSAGES);
         }
@@ -68,32 +96,33 @@ class MessageManager {
     saveMessages() {
         try {
             localStorage.setItem(this.storageKey, JSON.stringify(this.messages));
+            return true;
         } catch (error) {
             console.error('Error saving messages:', error);
-            if (error.name === 'QuotaExceededError') {
-                // If storage is full, remove oldest messages
-                this.messages = this.messages.slice(0, Math.floor(this.messages.length / 2));
-                this.saveMessages();
-            }
+            return false;
         }
     }
 
-    clearMessages() {
+    clearChat() {
+        // Clear chat but preserve system message
         this.messages = [];
         this.saveMessages();
     }
 
     deleteAllData() {
-        try {
-            localStorage.removeItem(this.storageKey);
-            this.messages = [];
-        } catch (error) {
-            console.error('Error deleting messages:', error);
-        }
+        // Clear everything including system message
+        this.messages = [];
+        this.systemMessage = null;
+        localStorage.removeItem(this.storageKey);
+        localStorage.removeItem(this.systemMessageKey);
     }
 
-    getMessages() {
-        return this.messages;
+    isValidMessage(msg) {
+        return msg 
+            && typeof msg === 'object'
+            && ['user', 'agent', 'system'].includes(msg.role)
+            && typeof msg.content === 'string'
+            && typeof msg.timestamp === 'number';
     }
 }
 
@@ -143,7 +172,7 @@ systemMessageBtn.addEventListener('click', async () => {
             }
 
             // Add system message to UI
-            messageManager.addMessage('system', `System Instruction: ${systemMessage}`);
+            messageManager.setSystemMessage(`System Instruction: ${systemMessage}`);
             displayMessages();
         } catch (error) {
             console.error('Error setting system message:', error);
@@ -157,38 +186,44 @@ systemMessageBtn.addEventListener('click', async () => {
 
 // Functions
 async function sendMessage() {
-    const message = messageInput.value.trim();
-    if (!message) return;
-
-    // Disable input and button while processing
-    setInputState(false);
-
     try {
-        // Add user message
-        messageManager.addMessage('user', message);
-        displayMessages();
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        setInputState(false);
         messageInput.value = '';
 
-        // Send message to backend
+        // Add user message to UI
+        messageManager.addMessage('user', message);
+        displayMessages();
+
+        // Get conversation history including system message
+        const messages = messageManager.getConversationHistory();
+
+        // Send message to server
         const response = await fetch('/chat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({
+                message,
+                role: 'user',
+                messages  // Send full conversation history including system message
+            })
         });
 
         if (!response.ok) {
-            throw new Error(`Server responded with status: ${response.status}`);
+            throw new Error('Failed to send message');
         }
 
         const data = await response.json();
         
-        // Add agent response
+        // Add agent response to UI
         messageManager.addMessage('agent', data.response);
         displayMessages();
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Error sending message:', error);
         messageManager.addMessage('system', `Error: ${error.message}`);
         displayMessages();
     } finally {
@@ -198,7 +233,7 @@ async function sendMessage() {
 
 function displayMessages() {
     messagesContainer.innerHTML = '';
-    messageManager.getMessages().forEach(message => {
+    messageManager.getConversationHistory().forEach(message => {
         const messageElement = document.createElement('div');
         messageElement.className = `message ${message.role}-message`;
         
@@ -245,7 +280,7 @@ async function clearChat() {
     try {
         await fetch('/clear-history', { method: 'POST' });
         messageInput.value = '';
-        messageManager.clearMessages();
+        messageManager.clearChat();
         displayMessages();
     } catch (error) {
         console.error('Error clearing chat history:', error);
@@ -258,5 +293,3 @@ function deleteAll() {
     messageManager.deleteAllData();
     displayMessages();
 }
-
-// Fully functional after remomovnig training data
