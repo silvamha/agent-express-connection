@@ -28,12 +28,13 @@ class MessageManager {
         }
     }
 
-    setSystemMessage(content) {
+    setSystemMessage(content, isTemporary = false) {
         try {
             const systemMessage = {
                 role: 'system',
                 content,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                isTemporary
             };
             localStorage.setItem(this.systemMessageKey, JSON.stringify(systemMessage));
             this.systemMessage = systemMessage;
@@ -42,6 +43,18 @@ class MessageManager {
             console.error('Error saving system message:', error);
             return false;
         }
+    }
+
+    getConversationHistory() {
+        // Get base history
+        const history = [...this.messages];
+        
+        // Add system message if exists
+        if (this.systemMessage) {
+            history.unshift(this.systemMessage);
+        }
+        
+        return history;
     }
 
     loadMessages() {
@@ -64,15 +77,6 @@ class MessageManager {
             console.error('Error loading messages:', error);
             return [];
         }
-    }
-
-    getConversationHistory() {
-        // Combine system message with conversation history
-        const history = [...this.messages];
-        if (this.systemMessage) {
-            history.unshift(this.systemMessage);
-        }
-        return history;
     }
 
     addMessage(role, content) {
@@ -193,6 +197,15 @@ async function sendMessage() {
         setInputState(false);
         messageInput.value = '';
 
+        // Check if it's a system instruction command
+        if (message.startsWith('/system ')) {
+            const systemInstruction = message.substring(8).trim();
+            if (systemInstruction) {
+                await handleSystemInstruction(systemInstruction);
+                return;
+            }
+        }
+
         // Add user message to UI
         messageManager.addMessage('user', message);
         displayMessages();
@@ -209,7 +222,7 @@ async function sendMessage() {
             body: JSON.stringify({
                 message,
                 role: 'user',
-                messages  // Send full conversation history including system message
+                messages
             })
         });
 
@@ -228,6 +241,32 @@ async function sendMessage() {
         displayMessages();
     } finally {
         setInputState(true);
+    }
+}
+
+async function handleSystemInstruction(instruction) {
+    try {
+        // Send to server first
+        const response = await fetch('/set-system-message', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ message: instruction })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to set system message');
+        }
+
+        // If server accepts, update local storage
+        messageManager.setSystemMessage(instruction, true);
+        messageManager.addMessage('system', `System instruction updated: ${instruction}`);
+        displayMessages();
+    } catch (error) {
+        console.error('Error setting system instruction:', error);
+        messageManager.addMessage('system', `Error: ${error.message}`);
+        displayMessages();
     }
 }
 
@@ -293,3 +332,15 @@ function deleteAll() {
     messageManager.deleteAllData();
     displayMessages();
 }
+
+// Add help message to show system instruction command
+const helpMessage = `
+💡 Available Commands:
+/system [instruction] - Set a temporary system instruction
+Example: /system Act as a helpful coding assistant
+
+Note: System instructions set via chat will persist until cleared.
+`;
+
+messageManager.addMessage('system', helpMessage);
+displayMessages();

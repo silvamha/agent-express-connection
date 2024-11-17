@@ -23,6 +23,9 @@ app.use((req, res, next) => {
     next();
 });
 
+// Store dashboard system message
+let dashboardSystemMessage = null;
+
 // Route to handle chat messages
 app.post('/chat', async (req, res) => {
     try {
@@ -30,10 +33,21 @@ app.post('/chat', async (req, res) => {
         console.log('Received message:', message);
         console.log('Received conversation history:', messages);
 
+        // If there's a dashboard system message, add it to the conversation
+        let finalMessages = [...messages];
+        if (dashboardSystemMessage) {
+            // Remove any temporary system messages
+            finalMessages = finalMessages.filter(msg => 
+                !(msg.role === 'system' && msg.isTemporary)
+            );
+            // Add dashboard system message first
+            finalMessages.unshift(dashboardSystemMessage);
+        }
+
         // Use the provided conversation history
         const requestBody = {
             agent_id: process.env.MISTRAL_AGENT_ID,
-            messages: messages.slice(-10) // Keep last 10 messages including system message
+            messages: finalMessages.slice(-10) // Keep last 10 messages including system message
         };
 
         console.log('Using Agent ID:', process.env.MISTRAL_AGENT_ID);
@@ -63,7 +77,7 @@ app.post('/chat', async (req, res) => {
     }
 });
 
-// Route to set system message
+// Route to set system message from dashboard
 app.post('/set-system-message', async (req, res) => {
     try {
         const { message } = req.body;
@@ -71,9 +85,11 @@ app.post('/set-system-message', async (req, res) => {
             return res.status(400).json({ error: 'System message is required' });
         }
 
-        const systemMessage = {
+        // Update dashboard system message
+        dashboardSystemMessage = {
             role: 'system',
-            content: message
+            content: message,
+            timestamp: Date.now()
         };
 
         res.json({ success: true });
