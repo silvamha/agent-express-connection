@@ -258,3 +258,5 @@ function deleteAll() {
     messageManager.deleteAllData();
     displayMessages();
 }
+
+// Fully functional after remomovnig training data
