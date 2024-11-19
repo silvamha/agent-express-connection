@@ -5,7 +5,7 @@
   "description": "MistralAI agent connection through Express backend",
   "main": "server.js",
   "scripts": {
-    "dev:backend": "cross-env PORT=3002 nodemon server.js",
+    "dev:backend": "cross-env PORT=3005 nodemon server.js",
     "dev:frontend": "cross-env VITE_PORT=5173 vite",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "start": "node server.js",

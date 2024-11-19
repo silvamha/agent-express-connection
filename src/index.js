@@ -51,10 +51,17 @@ class MessageManager {
         
         // Add system message if exists
         if (this.systemMessage) {
-            history.unshift(this.systemMessage);
+            history.unshift({
+                ...this.systemMessage,
+                timestamp: this.systemMessage.timestamp || Date.now()
+            });
         }
         
-        return history;
+        return history.map(msg => ({
+            role: msg.role === 'agent' ? 'assistant' : msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp
+        }));
     }
 
     loadMessages() {
@@ -81,8 +88,8 @@ class MessageManager {
 
     addMessage(role, content) {
         const message = {
-            role,
-            content,
+            role: role === 'assistant' ? 'agent' : role, // Store as 'agent' internally
+            content: content || '',
             timestamp: Date.now()
         };
 
@@ -221,19 +228,22 @@ async function sendMessage() {
             },
             body: JSON.stringify({
                 message,
-                role: 'user',
                 messages
             })
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
-            throw new Error('Failed to send message');
+            throw new Error(data.error || 'Failed to send message');
         }
 
-        const data = await response.json();
+        if (!data.response) {
+            throw new Error('Invalid response from server');
+        }
         
         // Add agent response to UI
-        messageManager.addMessage('agent', data.response);
+        messageManager.addMessage('assistant', data.response);
         displayMessages();
     } catch (error) {
         console.error('Error sending message:', error);
@@ -271,41 +281,67 @@ async function handleSystemInstruction(instruction) {
 }
 
 function displayMessages() {
-    messagesContainer.innerHTML = '';
-    messageManager.getConversationHistory().forEach(message => {
-        const messageElement = document.createElement('div');
-        messageElement.className = `message ${message.role}-message`;
+    try {
+        messagesContainer.innerHTML = '';
+        const messages = messageManager.getConversationHistory();
         
-        // Format the message content with proper HTML
-        messageElement.innerHTML = formatMessageContent(message.content);
+        messages.forEach(message => {
+            const messageElement = document.createElement('div');
+            messageElement.className = `message ${message.role}-message`;
+            
+            // Create message content
+            const contentElement = document.createElement('div');
+            contentElement.className = 'message-content';
+            contentElement.innerHTML = formatMessageContent(message.content);
+            messageElement.appendChild(contentElement);
+            
+            // Add timestamp if available
+            if (message.timestamp) {
+                const timestampElement = document.createElement('div');
+                timestampElement.className = 'message-timestamp';
+                timestampElement.textContent = formatTimestamp(message.timestamp);
+                messageElement.appendChild(timestampElement);
+            }
+            
+            messagesContainer.appendChild(messageElement);
+        });
         
-        // Add timestamp
-        const timestamp = document.createElement('div');
-        timestamp.className = 'message-timestamp';
-        timestamp.textContent = formatTimestamp(message.timestamp);
-        messageElement.appendChild(timestamp);
-
-        messagesContainer.appendChild(messageElement);
-    });
+        // Scroll to bottom
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    } catch (error) {
+        console.error('Error displaying messages:', error);
+    }
 }
 
 function formatMessageContent(content) {
-    // Convert URLs to links
-    content = content.replace(
-        /(https?:\/\/[^\s]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
-    );
-
-    // Preserve line breaks
-    return content.replace(/\\n/g, '<br>');
+    try {
+        if (!content) return '';
+        // Escape HTML to prevent XSS
+        const escaped = content
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+        
+        // Convert newlines to <br>
+        return escaped.replace(/\n/g, '<br>');
+    } catch (error) {
+        console.error('Error formatting message content:', error);
+        return '';
+    }
 }
 
 function formatTimestamp(timestamp) {
-    return new Intl.DateTimeFormat('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-    }).format(new Date(timestamp));
+    try {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        if (isNaN(date.getTime())) return ''; // Invalid date
+        return date.toLocaleTimeString();
+    } catch (error) {
+        console.error('Error formatting timestamp:', error);
+        return '';
+    }
 }
 
 function setInputState(enabled) {

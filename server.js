@@ -1,58 +1,46 @@
-// Import required dependencies
 import express from 'express';
-import dotenv from 'dotenv';
 import cors from 'cors';
+import dotenv from 'dotenv';
 import fetch from 'node-fetch';
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3005; // Changed port to 3005
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-    console.log(`${req.method} ${req.path}`, {
-        body: req.body,
-        headers: req.headers
-    });
-    next();
-});
-
-// Store dashboard system message
+// Store system message
 let dashboardSystemMessage = null;
 
 // Route to handle chat messages
 app.post('/chat', async (req, res) => {
     try {
         const { message, messages = [] } = req.body;
-        console.log('Received message:', message);
-        console.log('Received conversation history:', messages);
+        
+        console.log('Received messages:', messages);
+        console.log('Current message:', message);
 
-        // If there's a dashboard system message, add it to the conversation
-        let finalMessages = [...messages];
+        // Format messages for Mistral API
+        const formattedMessages = messages.map(msg => ({
+            role: msg.role === 'agent' ? 'assistant' : msg.role,
+            content: msg.content
+        }));
+
+        // Add current message
+        formattedMessages.push({
+            role: 'user',
+            content: message
+        });
+
+        // Add system message if exists
         if (dashboardSystemMessage) {
-            // Remove any temporary system messages
-            finalMessages = finalMessages.filter(msg => 
-                !(msg.role === 'system' && msg.isTemporary)
-            );
-            // Add dashboard system message first
-            finalMessages.unshift(dashboardSystemMessage);
+            formattedMessages.unshift({
+                role: 'system',
+                content: dashboardSystemMessage.content
+            });
         }
 
-        // Use the provided conversation history
-        const requestBody = {
-            agent_id: process.env.MISTRAL_AGENT_ID,
-            messages: finalMessages.slice(-10) // Keep last 10 messages including system message
-        };
-
-        console.log('Using Agent ID:', process.env.MISTRAL_AGENT_ID);
-        console.log('API Key length:', process.env.MISTRAL_LAUREN_API_KEY?.length);
-        console.log('Request to Mistral:', JSON.stringify(requestBody, null, 2));
+        console.log('Formatted messages for Mistral:', JSON.stringify(formattedMessages, null, 2));
 
         const response = await fetch('https://api.mistral.ai/v1/agents/completions', {
             method: 'POST',
@@ -60,32 +48,39 @@ app.post('/chat', async (req, res) => {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${process.env.MISTRAL_LAUREN_API_KEY}`
             },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({
+                agent_id: process.env.MISTRAL_AGENT_ID,
+                messages: formattedMessages.slice(-10) // Keep last 10 messages
+            })
         });
 
+        const data = await response.json();
+        console.log('Mistral API response:', JSON.stringify(data, null, 2));
+        
         if (!response.ok) {
-            throw new Error(`Mistral API responded with status: ${response.status}`);
+            throw new Error(data.error?.message || `API Error: ${response.status}`);
         }
 
-        const data = await response.json();
-        console.log('Mistral response:', data);
+        const agentResponse = data.choices?.[0]?.message?.content;
+        if (!agentResponse) {
+            throw new Error('Invalid response format from API');
+        }
 
-        res.json({ response: data.response });
+        res.json({ response: agentResponse });
     } catch (error) {
-        console.error('Error in chat endpoint:', error);
+        console.error('Chat error:', error);
         res.status(500).json({ error: error.message });
     }
 });
 
-// Route to set system message from dashboard
-app.post('/set-system-message', async (req, res) => {
+// Set system message
+app.post('/set-system-message', (req, res) => {
     try {
         const { message } = req.body;
         if (!message) {
-            return res.status(400).json({ error: 'System message is required' });
+            return res.status(400).json({ error: 'System message required' });
         }
 
-        // Update dashboard system message
         dashboardSystemMessage = {
             role: 'system',
             content: message,
@@ -94,37 +89,39 @@ app.post('/set-system-message', async (req, res) => {
 
         res.json({ success: true });
     } catch (error) {
-        console.error('Error setting system message:', error);
-        res.status(500).json({ error: 'Failed to set system message' });
+        console.error('System message error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
-// Route to clear chat history
-app.post('/clear-history', (req, res) => {
+// Clear system message
+app.post('/clear-system-message', (req, res) => {
     try {
-        // Clear conversation history but keep system message
-        const conversationHistory = [];
+        dashboardSystemMessage = null;
         res.json({ success: true });
     } catch (error) {
-        console.error('Error clearing chat history:', error);
-        res.status(500).json({ error: 'Failed to clear chat history' });
+        console.error('Clear system error:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
-// Start server with error handling
-const server = app.listen(PORT)
-    .on('error', (error) => {
-        if (error.code === 'EADDRINUSE') {
-            console.error(`Port ${PORT} is already in use. Please try a different port or kill the process using this port.`);
-            process.exit(1);
-        } else {
-            console.error('Failed to start server:', error);
-            process.exit(1);
-        }
-    })
-    .on('listening', () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-        console.log('Environment check:');
-        console.log('API Key present:', !!process.env.MISTRAL_LAUREN_API_KEY);
-        console.log('Agent ID:', process.env.MISTRAL_AGENT_ID);
-    });
+const PORT = process.env.PORT || 3005;
+
+function startServer(port) {
+    try {
+        app.listen(port, () => {
+            console.log(`Server running on port ${port}`);
+        }).on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+                console.log(`Port ${port} is busy, trying ${port + 1}`);
+                startServer(port + 1);
+            } else {
+                console.error('Server error:', err);
+            }
+        });
+    } catch (err) {
+        console.error('Failed to start server:', err);
+    }
+}
+
+startServer(PORT);
